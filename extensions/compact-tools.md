@@ -17,7 +17,7 @@
 | --- | --- |
 | 文件 | `extensions/compact-tools.ts` |
 | 说明文档 | 本文件 |
-| 自测 | `node extensions/compact-tools.selftest.mjs`（18 例） |
+| 自测 | `node extensions/compact-tools.selftest.mjs`（24 例） |
 | 生效方式 | `/reload`（或重启 pi） |
 | 基线 | pi 0.85.1（升级后对照 §7 检查清单） |
 | 执行逻辑 | 100% 委托内置工具实现（同一对象引用返回） |
@@ -59,6 +59,27 @@
 ✓ 修改 utils.ts
 ⚠️ 读取 src/index.ts  已中断
 ```
+
+### 展开态的分段配色
+
+展开明细里**只有「会改动文件的行」（`edit` / `write`）上分段颜色**，其余行保持单色：
+
+| 片段 | 色键（dark 主题色值） | 出现行 |
+| --- | --- | --- |
+| 文件路径**末段**（`app.ts`） | `accent`（#8abeb7） | 改动文件且成功的行 |
+| `+a`（新增行数） | `toolDiffAdded`（#b5bd68） | 同上（仅有 diff 统计时） |
+| `−r`（删除行数） | `toolDiffRemoved`（#cc6666） | 同上 |
+| `✓ 修改 ` 前缀、目录前缀（`src/`）、括号、` / ` | `toolOutput`（#808080） | 同上 |
+| 整行（读取 / 查看 / 搜索 / 命令） | `toolOutput`（#808080） | **不上色** |
+| 整行（失败 `✗` / 中断 `⚠️` / 省略 `…`） | `error` / `warning` / `muted` | **不拆色**（失败信号保持整行红） |
+
+即：目录前缀仍是灰的，亮起来的只有文件名末段；`+a` 绿 与 `−r` 红就是「修改 / 删除」的体现
+（删除以 `−r` 红色表示，**不检测 bash 的 `rm`**）。配色存在条目的 `Detail.segs` 里，
+**`text` 字段完全不变**，所以 `pi -c` 恢复后颜色依旧。
+
+> 分段配色自 **v0.1.2** 起生效。更早版本写入的汇总块条目（session 里没有 `segs` 字段）**仍按单色渲染**——
+> 设计上不改写历史条目数据，因此也不需要任何迁移。想在旧块上看到颜色只能重发同一条更新，这是刻意的取舍。
+> 「删除文件」同理：bash 的 `rm` 属于「执行命令」行，不上色；删除只以 `−r` 红色体现。
 
 ### v1 模式（`PI_COMPACT_TOOLS_AGGREGATE=0`）
 
@@ -120,6 +141,7 @@ edit src/app.ts (3 处)
 
 类别归属见上表。单次工具调用的请求同样折叠。`Ctrl+O` 展开明细：每项一行，含 `+a / −r`（edit）与错误首行；
 明细上限 20 项，超出时保留**最早 5 项 + 最新 15 项**，中间显示 `… 省略 N 项 …`。
+其中「会改动文件的行」（edit / write）会分段上色（文件名末段 + `+a`/`−r`），规则见 §1「展开态的分段配色」。
 
 ### 会话恢复
 
@@ -145,11 +167,12 @@ edit src/app.ts (3 处)
 | 汇总块最多列几个被修改文件名 | `MODIFIED_NAME_MAX = 5` |
 | 明细保留的最早 / 最新项数 | `DETAIL_HEAD = 5` / `DETAIL_TAIL = 15`（`DETAIL_MAX = 20`，同时也是条目 `items` 上限） |
 | 进度行里命令/标签长度 | `LABEL_MAX = 40` |
+| 「修改」明细行的分段配色 | `SEG_FILE_COLOR = "accent"` / `SEG_ADD_COLOR = "toolDiffAdded"` / `SEG_DEL_COLOR = "toolDiffRemoved"` |
 | 汇总/进度文案与类别归属 | `CAT_OF` / `CAT_ORDER` / `CAT_ICON` / `CAT_VERB` / `CAT_LABEL` + `buildSummary()` |
 | session 条目类型 | `ENTRY_TYPE`（**改动会使旧会话的汇总块失效**） |
 | 只保留某个工具的内置渲染 | 删掉该工具的 `...makeRenderers("<tool>")`，改为 `renderShell: "default"` |
 
-主题键（`theme.fg(name, text)`）：`toolTitle` `accent` `dim` `muted` `success` `error` `warning` `toolOutput`；
+主题键（`theme.fg(name, text)`）：`toolTitle` `accent` `dim` `muted` `success` `error` `warning` `toolOutput` `toolDiffAdded` `toolDiffRemoved` `toolDiffContext`；
 背景键（`theme.bg`）：`toolPendingBg` `toolSuccessBg` `toolErrorBg`。可用键以 `docs/themes.md` 为准。
 
 > 删掉渲染器即可退回内置样式：pi 会按 slot 继承内置渲染器（`withBuiltInRenderers()`），
@@ -342,7 +365,7 @@ node extensions/compact-tools.selftest.mjs
 ```
 
 用 pi 自己的 jiti + alias 加载扩展，用 stub `pi` / theme / ctx 驱动全流程（在临时目录里跑**真实**的
-read/write/edit/bash），pi 包路径按 `PI_PKG` 环境变量 → `npm root -g` 依次解析，覆盖 18 个用例：
+read/write/edit/bash），pi 包路径按 `PI_PKG` 环境变量 → `npm root -g` 依次解析，覆盖 24 个用例：
 
 | 用例 | 断言 |
 | --- | --- |
@@ -364,6 +387,12 @@ read/write/edit/bash），pi 包路径按 `PI_PKG` 环境变量 → `npm root -g
 | P read 尾行 | 文件以 `[section]` 结尾时仍统计 5 行（截断提示只匹配已知文案，不误删合法尾行） |
 | Q 明细首尾兼顾 | 25 次调用 → `details.length === 21`（5 首 + 1 省略 + 15 尾），中间项不出现，末项保留 |
 | R 连续两次请求 | 第一次 flush 清空 items 后历史行仍隐藏，第二次请求独立聚合 |
+| S edit 行分段着色 | 展开后含 `[accent]seg.ts[/]`、`[toolDiffAdded]+1[/]`、`[toolDiffRemoved]−1[/]`；`✓ 修改 `、括号、` / ` 仍包在 `[toolOutput]` 内；并断言 `data.v === 2`、`details[].text` 逐字不变、`segs` 拼接等于 `text` |
+| T 只有末段上色 | `src/deep/file.ts` → 有 `[accent]file.ts[/]`，目录前缀 `[toolOutput]src/deep/[/]` 不得带 accent |
+| U write 行 | `✓ 修改 log.ts` 含 `[accent]log.ts[/]`，且不出现任何 `toolDiff*` 色段（write 无 diff 统计） |
+| V 其它类别不上色 | 同块的 `read`/`ls` 行整行单色且无内嵌色段；同块 `edit` 行正常着色（证明是按类别选择） |
+| W 失败/省略不强拆色 | 失败 edit 行 `segs === undefined` 且整行 `[error]`；省略行 `segs === undefined` 且 `[muted]` |
+| X 恢复后配色仍在 | 新实例 `session_start` 吃下 entry 后仅用条目数据渲染，`[accent]`/`[toolDiffAdded]`/`[toolDiffRemoved]` 标记仍在 |
 
 ### 手动（TUI）
 
@@ -407,7 +436,8 @@ read/write/edit/bash），pi 包路径按 `PI_PKG` 环境变量 → `npm root -g
   prompt cache 后按 cache-read 计费）。其余上下文增量为 0。想关掉：`pi --exclude-tools grep,find,ls`
   （代价是扩展也不再渲染/聚合它们）。
 - **session 文件**：每次用到工具的请求写一条 `compact-tools.group` 自定义条目（**不进 LLM 上下文**），
-  实测约 **170–280 字节/次工具调用**（10 次≈2.8KB，45 次≈7.8KB）。`items`/`details` 封顶 20 项，
+  实测约 **170–280 字节/次工具调用**（10 次≈2.8KB，45 次≈7.8KB）。其中**会改动文件的成功明细行**多一个 `segs`
+  分段数组（约 **+60–90 字节/行**，仅 edit/write，且明细本就封顶 20 项），其余行不带该字段。`items`/`details` 封顶 20 项，
   但 `ids` 不封顶，超长请求会随调用数线性增长；`details` 与 `items` 有部分重复存储。恢复会话时会
   遍历全部条目重建映射（一次性 CPU/内存开销）。
 - 隐藏的工具行不能再被单击展开；明细集中在汇总块的 `Ctrl+O`。
@@ -422,6 +452,11 @@ read/write/edit/bash），pi 包路径按 `PI_PKG` 环境变量 → `npm root -g
 
 ## 9. 变更记录
 
+- **v6（明细行分段配色）**：聚合模式展开明细中，「会改动文件的行」（edit / write）新增分段配色——
+  文件名末段 `accent`、`+a` `toolDiffAdded`、`−r` `toolDiffRemoved`，其余片段（`✓ 修改 ` 前缀、目录前缀、
+  括号、` / `）保持 `toolOutput` 灰；读取 / 查看 / 搜索 / 命令与失败 / 中断 / 省略行**一律不拆色**。
+  实现走 `Detail.segs` 可选字段，**`text` 与条目版本 `v: 2` 均不变**（旧条目、旧断言、HTML 导出回退不受影响，
+  无需迁移）；`segs` 随条目落盘，`pi -c` 恢复后颜色依旧。新增三个可调常量与自测 S–X（共 24 例）。
 - **v5（文档校正）**：澄清「只影响 TUI」——注册 7 个同名工具会把 `grep`/`find`/`ls` 一并激活
   （≈ +2.2KB/请求，约 550–750 token）；补记 session 文件 ≈170–280 B/次调用的磁盘开销与 `ids` 不封顶。
 - **v4（修复与去重）**：`stripReadNotices` 只匹配已知提示（坑 5）；明细改「首 5 + 末 15」并给出省略标记；

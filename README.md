@@ -14,6 +14,10 @@ single request is folded into **one compact summary block** instead of one row p
   summary block is appended under the answer, e.g.
   `🔧 8 operations: ✏️ 5 files changed · 📖 3 files read · 💻 2 commands · 🔍 1 search`.
 - **`Ctrl+O` to expand** — per-item detail with edit `+a / −r` stats and the first line of any error.
+  Rows that **change files** (`edit`/`write`) are color-coded: the file name is highlighted and `+a`/`−r`
+  are green/red. Read/list/search/command rows and failed/omitted rows stay single-colored.
+  Summary blocks written by **earlier versions** carry no color data and keep rendering single-colored
+  (historical entries are never rewritten, so no migration is involved).
   Large requests keep the **first 5 and last 15** items with an omission marker in between.
 - **v1 mode** (`PI_COMPACT_TOOLS_AGGREGATE=0`) — one compact row per tool (call row + one-line result),
   expandable with `Ctrl+O`.
@@ -25,10 +29,10 @@ single request is folded into **one compact summary block** instead of one row p
 ## Install
 
 ```bash
-pi install git:github.com/lucissie-dot/pi-compact-tool-cards@v0.1.1
+pi install git:github.com/lucissie-dot/pi-compact-tool-cards@v0.1.2
 
 # try without installing (temporary)
-pi -e git:github.com/lucissie-dot/pi-compact-tool-cards@v0.1.1
+pi -e git:github.com/lucissie-dot/pi-compact-tool-cards@v0.1.2
 ```
 
 Manual / offline: copy `extensions/compact-tools.ts` to `~/.pi/agent/extensions/` (global) or
@@ -61,7 +65,8 @@ renders/aggregates those three tools), or configure `defaultTools` to exclude th
 
 Everything else has zero context cost: no injected messages, no prompt text, and the
 `compact-tools.group` session entries are custom entries that do not participate in LLM context
-(they do grow the session file by roughly 170–280 bytes per tool call).
+(they do grow the session file by roughly 170–280 bytes per tool call, plus ~60–90 bytes for a
+row that changes a file — that row carries a small color-segment array).
 
 ## Configuration
 
@@ -86,7 +91,7 @@ block via an entry renderer. Execution is 100% delegated to the built-in impleme
 node extensions/compact-tools.selftest.mjs
 ```
 
-Runs 18 cases against real `read`/`write`/`edit`/`bash` in a temp directory, using pi's own jiti to
+Runs 24 cases against real `read`/`write`/`edit`/`bash` in a temp directory, using pi's own jiti to
 load the extension with a stub `pi`/theme/ctx. It resolves the pi package from the `PI_PKG`
 environment variable first, then `npm root -g`.
 

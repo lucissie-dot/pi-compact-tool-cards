@@ -34,8 +34,11 @@
  *   8. HTML 导出是另一条渲染路径：模板对 bash/read/write/edit/ls 用自带结构化渲染
  *      （不调本扩展渲染器），只有 grep/find 走扩展渲染，且自定义条目不导出——
  *      所以不要为了「导出好看」往隐藏行里塞内容。
+ *   9. 明细配色走 Detail.segs 分段，**text 字段必须永久保留**：旧会话条目没有 segs、
+ *      自测与 HTML 导出的回退路径都读 text。只新增可选字段、不改 text → 条目仍是 v2，
+ *      不需要任何迁移。详见 compact-tools.md §1「分段配色」。
  *
- * 安装：pi install git:github.com/lucissie-dot/pi-compact-tool-cards@v0.1.1
+ * 安装：pi install git:github.com/lucissie-dot/pi-compact-tool-cards@v0.1.2
  *       （或把本文件复制到 ~/.pi/agent/extensions/）
  * 生效方式：/reload（或重启 pi）
  * 说明文档：同目录 compact-tools.md（效果、可调项、维护须知、自测脚本）
@@ -75,6 +78,10 @@ const DETAIL_TAIL = 15;
 const DETAIL_MAX = DETAIL_HEAD + DETAIL_TAIL;
 /** 进度行里命令/标签的最大字符数 */
 const LABEL_MAX = 40;
+/** 「修改」明细行的分段配色：文件名末段 / +a / −r（其余部分一律 toolOutput 灰） */
+const SEG_FILE_COLOR = "accent";
+const SEG_ADD_COLOR = "toolDiffAdded";
+const SEG_DEL_COLOR = "toolDiffRemoved";
 
 const TOOL_NAMES = ["read", "write", "edit", "bash", "grep", "find", "ls"] as const;
 type ToolName = (typeof TOOL_NAMES)[number];
@@ -104,7 +111,11 @@ type Item = {
 type LineKind = "title" | "files" | "warn";
 type Line = { text: string; kind: LineKind };
 type DetailKind = "ok" | "err" | "abort" | "omit";
-type Detail = { text: string; kind: DetailKind };
+/** 明细行分段的颜色键（缺 c 即 toolOutput 灰） */
+type SegColor = "accent" | "toolDiffAdded" | "toolDiffRemoved";
+type Seg = { t: string; c?: SegColor };
+/** text 是完整原文（旧条目、旧断言、HTML 导出回退都读它），segs 只是可选的配色切分 */
+type Detail = { text: string; kind: DetailKind; segs?: Seg[] };
 
 /** 写进 session 的汇总条目（不进模型上下文） */
 type EntryData = {
@@ -347,7 +358,12 @@ function summaryBox(theme: any, lines: Line[], details: Detail[] | undefined, ha
 	if (details && details.length > 0) {
 		for (const d of details) {
 			const color = d.kind === "err" ? "error" : d.kind === "abort" ? "warning" : d.kind === "omit" ? "muted" : "toolOutput";
-			box.addChild(new Text(theme.fg(color, d.text), 0, 0));
+			// 有分段时逐段上色（仍是一个 Text 节点、整体拼成一串，不改变行数与布局）
+			const body =
+				d.segs && d.segs.length > 0 && d.kind === "ok"
+					? d.segs.map((s) => theme.fg(s.c ?? "toolOutput", s.t)).join("")
+					: theme.fg(color, d.text);
+			box.addChild(new Text(body, 0, 0));
 		}
 	}
 	return box;
@@ -378,6 +394,33 @@ function displayNames(items: Item[], cwd: string): string[] {
 	const counts = new Map<string, number>();
 	for (const u of uniq) counts.set(u.name, (counts.get(u.name) ?? 0) + 1);
 	return uniq.map((u) => ((counts.get(u.name) ?? 0) > 1 ? relPath(cwd, u.key) : u.name));
+}
+
+/**
+ * 「会改动文件的行」的分段配色。
+ * 只有 edit / write（cat === "edit"）且成功时才返回分段；
+ * 读取 / 查看 / 搜索 / 命令，以及失败(err) / 中断(abort) / 省略(omit) 一律返回 undefined，
+ * 渲染端退回单色——失败信号保持整行红/黄，不被拆色稀释。
+ * 只给路径末段文件名与 +a / −r 上色，目录前缀与括号保持 toolOutput 灰。
+ */
+function editSegs(it: Item, kind: DetailKind, prefix: string, where: string, stat: string, note: string): Seg[] | undefined {
+	if (kind !== "ok" || it.cat !== "edit") return undefined;
+	const cut = where.lastIndexOf("/");
+	const dir = cut >= 0 ? where.slice(0, cut + 1) : "";
+	const base = cut >= 0 ? where.slice(cut + 1) : where;
+	const segs: Seg[] = [{ t: `${prefix} ${CAT_VERB[it.cat]} ` }];
+	if (dir) segs.push({ t: dir });
+	segs.push({ t: base, c: SEG_FILE_COLOR });
+	if (stat) {
+		segs.push({ t: "（" });
+		// diffStat() 的固定格式；解析不出就整段留灰，不猜测
+		const m = /^\+(\d+) \/ −(\d+)$/.exec(stat);
+		if (!m) segs.push({ t: stat });
+		else segs.push({ t: `+${m[1]}`, c: SEG_ADD_COLOR }, { t: " / " }, { t: `−${m[2]}`, c: SEG_DEL_COLOR });
+		segs.push({ t: "）" });
+	}
+	if (note) segs.push({ t: note });
+	return segs;
 }
 
 function buildSummary(items: Item[], cwd: string): { lines: Line[]; details: Detail[]; detailTotal: number; hasError: boolean } {
@@ -411,9 +454,10 @@ function buildSummary(items: Item[], cwd: string): { lines: Line[]; details: Det
 		const kind: DetailKind = it.status === "abort" ? "abort" : it.status === "err" ? "err" : "ok";
 		const prefix = kind === "ok" ? "✓" : kind === "abort" ? "⚠️" : "✗";
 		const where = it.rawPath ? relPath(cwd, it.rawPath) : it.label;
-		const stat = it.stat ? `（${it.stat}）` : "";
+		const stat = it.stat ?? "";
 		const note = it.errText ? `  ${clip(it.errText, 80)}` : "";
-		return { kind, text: `${prefix} ${CAT_VERB[it.cat]} ${where}${stat}${note}` };
+		const text = `${prefix} ${CAT_VERB[it.cat]} ${where}${stat ? `（${stat}）` : ""}${note}`;
+		return { kind, text, segs: editSegs(it, kind, prefix, where, stat, note) };
 	};
 	// 首尾兼顾：大请求里最早与最新发生的操作都不丢，中间用 omit 标记
 	const omitted = Math.max(0, items.length - DETAIL_MAX);
@@ -743,7 +787,8 @@ export default function (pi: ExtensionAPI) {
 					ids: flushedIds,
 					items: pickEntryItems(group.items).map((it) => ({ ...it })),
 					lines: sum.lines.map((l) => ({ ...l })),
-					details: sum.details.map((d) => ({ ...d })),
+					// segs 是数组，必须跟着一起深拷贝，否则落盘后会被内存对象的后续变更污染
+					details: sum.details.map((d) => ({ ...d, ...(d.segs ? { segs: d.segs.map((s) => ({ ...s })) } : {}) })),
 					detailTotal: sum.detailTotal,
 					hasError: sum.hasError,
 				});

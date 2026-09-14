@@ -1,6 +1,6 @@
 {
   "name": "pi-compact-tool-cards",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Compact tool cards + per-request tool aggregation for the pi coding agent.",
   "keywords": [
     "pi-package",

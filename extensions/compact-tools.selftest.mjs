@@ -40,6 +40,12 @@ const PI_PKG_SLASH = PI_PKG.replace(/\\/g, "/");
 const { createJiti } = await import(`file://${PI_PKG_SLASH}/node_modules/jiti/lib/jiti-static.mjs`);
 
 const theme = { fg: (_c, t) => t, bg: (_c, t) => t, bold: (t) => t };
+/**
+ * 保留颜色键的 stub 主题：故意不用 ANSI，否则会被 strip() 吃掉。
+ * 渲染后一行长这样：`[toolOutput]✓ 修改 [/][accent]app.ts[/][toolOutput]（[/][toolDiffAdded]+1[/]…`
+ * 于是可以精确断言「哪一段是什么颜色」。
+ */
+const markerTheme = { fg: (c, t) => `[${c}]${t}[/]`, bg: (_c, t) => t, bold: (t) => t };
 const strip = (s) => s.replace(/\x1b\[[0-9;]*m/g, "");
 const lines = (component, width = 120) => component.render(width).map(strip);
 const textOf = (component, width = 120) => lines(component, width).join("\n");
@@ -48,6 +54,10 @@ const content = (component, width = 120) =>
 	lines(component, width)
 		.map((l) => l.trim())
 		.filter((l) => l.length > 0);
+
+/** 用指定主题（默认 markerTheme）展开渲染汇总块。宽度取 400：标记会撑长字符串，窄宽度下会被换行截断 */
+const expandWith = (stub, data, t = markerTheme) =>
+	content(stub.entryRenderers.get("compact-tools.group")({ data }, { expanded: true }, t), 400);
 
 const WORK = mkdtempSync(join(tmpdir(), "compact-tools-selftest-"));
 const CWD = WORK.replace(/\\/g, "/");
@@ -599,6 +609,151 @@ check("R. 连续两次请求：清空 items 后历史仍隐藏、第二次独立
 	assert.equal(stub.entries.length, 2);
 	assert.deepEqual(stub.entries[1].data.ids, ["r-2"]);
 	assert.equal(rows1.filter((r) => r.visible().length > 0).length, 0, "清空 items 后历史行仍保持隐藏");
+});
+
+check("S. edit 明细行分段着色：文件名 accent / +a 绿 / −r 红，且 text 逐字不变", async () => {
+	const stub = makeStub();
+	await (await loadExtension())(stub.pi);
+	const ctx = await startSession(stub);
+	writeFileSync(join(WORK, "seg.ts"), "const a = 1;\n");
+
+	const rows = [];
+	await invoke(stub, rows, "s1", "edit", { path: "seg.ts", edits: [{ oldText: "const a = 1;", newText: "const a = 2;" }] }, ctx);
+	await flushEvents(stub, "agent_end", ctx);
+
+	const data = stub.entries[0].data;
+	// 回归：条目格式与 text 都不得因配色而变
+	assert.equal(data.v, 2, "只新增可选字段，条目版本仍是 v2（无需迁移）");
+	assert.equal(data.details[0].text, "✓ 修改 seg.ts（+1 / −1）", "text 必须与改动前逐字一致");
+	assert.equal(data.details[0].segs.map((s) => s.t).join(""), data.details[0].text, "segs 拼接必须等于 text");
+
+	const line = expandWith(stub, data).find((l) => l.includes("✓ 修改"));
+	assert.ok(line, `应渲染出该明细行：${expandWith(stub, data).join(" | ")}`);
+	assert.match(line, /\[accent\]seg\.ts\[\/\]/, "文件名末段应为 accent");
+	assert.match(line, /\[toolDiffAdded\]\+1\[\/\]/, "+1 应为绿（toolDiffAdded）");
+	assert.match(line, /\[toolDiffRemoved\]−1\[\/\]/, "−1 应为红（toolDiffRemoved）");
+	assert.match(line, /\[toolOutput\]✓ 修改 \[\/\]/, "✓ 修改 前缀应保持 toolOutput 灰");
+	assert.match(line, /\[toolOutput\]（\[\/\]/, "左括号应保持灰");
+	assert.match(line, /\[toolOutput\] \/ \[\/\]/, "「 / 」分隔符应保持灰");
+	assert.match(line, /\[toolOutput\]）\[\/\]/, "右括号应保持灰");
+});
+
+check("T. 只有路径末段上色：目录前缀保持灰", async () => {
+	const stub = makeStub();
+	await (await loadExtension())(stub.pi);
+	const ctx = await startSession(stub);
+	mkdirSync(join(WORK, "src/deep"), { recursive: true });
+	writeFileSync(join(WORK, "src/deep/file.ts"), "const v = 1;\n");
+
+	const rows = [];
+	await invoke(stub, rows, "t1", "edit", { path: "src/deep/file.ts", edits: [{ oldText: "const v = 1;", newText: "const v = 2;" }] }, ctx);
+	await flushEvents(stub, "agent_end", ctx);
+
+	const data = stub.entries[0].data;
+	assert.equal(data.details[0].text, "✓ 修改 src/deep/file.ts（+1 / −1）");
+	const line = expandWith(stub, data).find((l) => l.includes("✓ 修改"));
+	assert.ok(line, `应渲染出该明细行：${expandWith(stub, data).join(" | ")}`);
+	assert.match(line, /\[accent\]file\.ts\[\/\]/, "末段文件名应为 accent");
+	assert.match(line, /\[toolOutput\]src\/deep\/\[\/\]/, "目录前缀应保持 toolOutput 灰");
+	assert.doesNotMatch(line, /\[accent\]src\/deep\//, "目录前缀不得被上色");
+});
+
+check("U. write 明细行：只提亮文件名，不出现 +a/−r 色段", async () => {
+	const stub = makeStub();
+	await (await loadExtension())(stub.pi);
+	const ctx = await startSession(stub);
+
+	const rows = [];
+	await invoke(stub, rows, "u1", "write", { path: "log.ts", content: "export const log = 1;\n" }, ctx);
+	await flushEvents(stub, "agent_end", ctx);
+
+	const data = stub.entries[0].data;
+	assert.equal(data.details[0].text, "✓ 修改 log.ts", "write 没有 diff 统计，text 不应有（+a / −r）");
+	const line = expandWith(stub, data).find((l) => l.includes("✓ 修改"));
+	assert.ok(line, `应渲染出该明细行：${expandWith(stub, data).join(" | ")}`);
+	assert.match(line, /\[accent\]log\.ts\[\/\]/, "文件名应为 accent");
+	assert.doesNotMatch(line, /toolDiffAdded|toolDiffRemoved/, "不应凭空出现 +/- 色段");
+});
+
+check("V. 其它类别不上色：读取 / 查看行整行仍是 toolOutput", async () => {
+	const stub = makeStub();
+	await (await loadExtension())(stub.pi);
+	const ctx = await startSession(stub);
+	writeFileSync(join(WORK, "plain.txt"), "p\n");
+	mkdirSync(join(WORK, "plaindir"), { recursive: true });
+	writeFileSync(join(WORK, "v.ts"), "const p = 1;\n");
+
+	const rows = [];
+	await invoke(stub, rows, "v1", "read", { path: "plain.txt" }, ctx);
+	await invoke(stub, rows, "v2", "ls", { path: "plaindir" }, ctx);
+	// 对照组：同一块里的 edit 行必须有色段，证明是「按类别选择」而非整块失效
+	await invoke(stub, rows, "v3", "edit", { path: "v.ts", edits: [{ oldText: "const p = 1;", newText: "const p = 2;" }] }, ctx);
+	await flushEvents(stub, "agent_end", ctx);
+
+	const data = stub.entries[0].data;
+	const expanded = expandWith(stub, data);
+	const readLine = expanded.find((l) => l.includes("✓ 读取"));
+	const lsLine = expanded.find((l) => l.includes("✓ 查看"));
+	assert.ok(readLine && lsLine, `应同时渲染出读取与查看行：${expanded.join(" | ")}`);
+	for (const [name, l] of [["读取", readLine], ["查看", lsLine]]) {
+		assert.match(l, /^\[toolOutput\]/, `${name}行应以 toolOutput 开头`);
+		const inner = l.replace(/^\[toolOutput\]/, "").replace(/\[\/\]$/, "");
+		assert.ok(!inner.includes("["), `${name}行应整行单色，不得出现额外色段：${l}`);
+		assert.doesNotMatch(l, /\[accent\]|\[toolDiff/, `${name}行不得出现 accent / diff 色段`);
+	}
+	assert.match(expanded.find((l) => l.includes("✓ 修改")), /\[accent\]v\.ts\[\/\]/, "同块的 edit 行应正常着色");
+});
+
+check("W. 失败与省略行不强拆色：整行单色", async () => {
+	const stub = makeStub();
+	await (await loadExtension())(stub.pi);
+	const ctx = await startSession(stub);
+
+	const rows = [];
+	// 失败的 edit（oldText 匹配不上 → throw）
+	await invoke(stub, rows, "w1", "edit", { path: "broken.ts", edits: [{ oldText: "nope", newText: "x" }] }, ctx);
+	// 补足 25 个操作，触发省略标记
+	for (let i = 1; i <= 24; i++) await invoke(stub, rows, `w-${i}`, "read", { path: `w${i}.txt` }, ctx);
+	await flushEvents(stub, "agent_end", ctx);
+
+	const data = stub.entries[0].data;
+	const errDetail = data.details.find((d) => d.kind === "err");
+	assert.ok(errDetail, "应有失败明细");
+	assert.match(errDetail.text, /^✗ 修改 broken\.ts/, `失败行文本：${errDetail.text}`);
+	assert.equal(errDetail.segs, undefined, "失败行不得带 segs（保持整行红）");
+
+	const omit = data.details.find((d) => d.kind === "omit");
+	assert.ok(omit, "25 个操作应产生省略标记");
+	assert.equal(omit.segs, undefined, "省略行不得带 segs");
+
+	const expanded = expandWith(stub, data);
+	const errLine = expanded.find((l) => l.includes("✗ 修改"));
+	assert.match(errLine, /^\[error\]/, "失败行应以 error 红开头（整行单色）");
+	assert.doesNotMatch(errLine, /\[accent\]|\[toolDiff/, "失败行不得被拆色");
+	assert.match(expanded.find((l) => l.includes("省略")), /^\[muted\]/, "省略行应为 muted");
+});
+
+check("X. 会话恢复后配色仍在（segs 随条目持久化）", async () => {
+	const stub = makeStub();
+	await (await loadExtension())(stub.pi);
+	const ctx = await startSession(stub);
+	writeFileSync(join(WORK, "restore.ts"), "const r = 1;\n");
+
+	const rows = [];
+	await invoke(stub, rows, "x1", "edit", { path: "restore.ts", edits: [{ oldText: "const r = 1;", newText: "const r = 2;" }] }, ctx);
+	await flushEvents(stub, "agent_end", ctx);
+	const entry = { type: "custom", customType: stub.entries[0].type, data: stub.entries[0].data };
+	// 内存中的 items 已清空，下面完全靠条目数据渲染
+	assert.equal(stub.entries[0].data.items.length, 1, "前置条件：条目只存了 items，展开明细靠 details");
+
+	const stub2 = makeStub();
+	await (await loadExtension())(stub2.pi);
+	await startSession(stub2, [entry]);
+	const line = expandWith(stub2, entry.data).find((l) => l.includes("✓ 修改"));
+	assert.ok(line, `恢复后应渲染出该明细行：${expandWith(stub2, entry.data).join(" | ")}`);
+	assert.match(line, /\[accent\]restore\.ts\[\/\]/, "恢复后文件名仍应上色");
+	assert.match(line, /\[toolDiffAdded\]\+1\[\/\]/, "恢复后 +1 仍应为绿");
+	assert.match(line, /\[toolDiffRemoved\]−1\[\/\]/, "恢复后 −1 仍应为红");
 });
 
 // ---------------------------------------------------------------- run
