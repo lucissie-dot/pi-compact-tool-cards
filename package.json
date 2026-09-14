@@ -1,0 +1,36 @@
+{
+  "name": "pi-compact-tool-cards",
+  "version": "0.1.0",
+  "description": "Compact tool cards + per-request tool aggregation for the pi coding agent.",
+  "keywords": [
+    "pi-package",
+    "pi",
+    "pi-coding-agent",
+    "extension",
+    "tui"
+  ],
+  "license": "MIT",
+  "author": "lucis.sie <lucis.sie@gmail.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lucissie-dot/pi-compact-tool-cards.git"
+  },
+  "homepage": "https://github.com/lucissie-dot/pi-compact-tool-cards#readme",
+  "bugs": {
+    "url": "https://github.com/lucissie-dot/pi-compact-tool-cards/issues"
+  },
+  "files": [
+    "extensions",
+    "README.md",
+    "LICENSE"
+  ],
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*"
+  },
+  "pi": {
+    "extensions": [
+      "./extensions"
+    ]
+  }
+}

@@ -1,0 +1,6 @@
+node_modules/
+npm-debug.log*
+*.bak
+compact-tools.ts.bak
+.DS_Store
+Thumbs.db
