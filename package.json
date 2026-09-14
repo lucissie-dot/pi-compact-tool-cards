@@ -1,6 +1,6 @@
 {
   "name": "pi-compact-tool-cards",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Compact tool cards + per-request tool aggregation for the pi coding agent.",
   "keywords": [
     "pi-package",
@@ -27,6 +27,10 @@
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",
     "@earendil-works/pi-tui": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-coding-agent": { "optional": true },
+    "@earendil-works/pi-tui": { "optional": true }
   },
   "pi": {
     "extensions": [

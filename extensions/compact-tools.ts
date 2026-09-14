@@ -35,7 +35,7 @@
  *      （不调本扩展渲染器），只有 grep/find 走扩展渲染，且自定义条目不导出——
  *      所以不要为了「导出好看」往隐藏行里塞内容。
  *
- * 安装：pi install git:github.com/lucissie-dot/pi-compact-tool-cards@v0.1.0
+ * 安装：pi install git:github.com/lucissie-dot/pi-compact-tool-cards@v0.1.1
  *       （或把本文件复制到 ~/.pi/agent/extensions/）
  * 生效方式：/reload（或重启 pi）
  * 说明文档：同目录 compact-tools.md（效果、可调项、维护须知、自测脚本）

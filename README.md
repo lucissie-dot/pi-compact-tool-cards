@@ -25,10 +25,10 @@ single request is folded into **one compact summary block** instead of one row p
 ## Install
 
 ```bash
-pi install git:github.com/lucissie-dot/pi-compact-tool-cards@v0.1.0
+pi install git:github.com/lucissie-dot/pi-compact-tool-cards@v0.1.1
 
 # try without installing (temporary)
-pi -e git:github.com/lucissie-dot/pi-compact-tool-cards@v0.1.0
+pi -e git:github.com/lucissie-dot/pi-compact-tool-cards@v0.1.1
 ```
 
 Manual / offline: copy `extensions/compact-tools.ts` to `~/.pi/agent/extensions/` (global) or
